@@ -59,5 +59,7 @@ public class BackpackClient implements ClientModInitializer {
             if (renderer instanceof AvatarRenderer)
                 helper.register(new BackpackLayer((RenderLayerParent) renderer, new BackpackModel(ctx.bakeLayer(LAYER))));
         });
+
+        HammerOutlineRenderer.register();
     }
 }

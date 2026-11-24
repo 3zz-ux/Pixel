@@ -31,25 +31,61 @@ public final class BreakActions {
 
         if (sp.isShiftKeyDown() && canBreak(sl, sp, pos, state, tool)) {
             if (state.is(BlockTags.LOGS) && tool.is(ItemTags.AXES)) {       // Tree Capitator
-                chain(sl, sp, pos, tool, s -> s.is(BlockTags.LOGS), 128);
+                for (BlockPos f : findChain(sl, sp, pos, tool, s -> s.is(BlockTags.LOGS), 128)) {
+                    breakNoDamage(sl, sp, f, tool);
+                }
                 return false;
             }
             if (state.is(ORES) && tool.is(ItemTags.PICKAXES)) {             // Vein Miner (pickaxe or hammer)
                 Block ore = state.getBlock();
-                chain(sl, sp, pos, tool, s -> s.is(ore), 64);
+                for (BlockPos f : findChain(sl, sp, pos, tool, s -> s.is(ore), 64)) {
+                    breakNoDamage(sl, sp, f, tool);
+                }
                 return false;
             }
         }
 
         if (tool.getItem() instanceof HammerItem h && h.size() > 1) {       // Hammer AOE
-            Direction face = face(sp, pos);
-            for (BlockPos p : HammerItem.area(pos, face, h.size())) {
-                if (p.equals(pos)) continue;
-                BlockState s = sl.getBlockState(p);
-                if (tool.getDestroySpeed(s) > 1.0f && canBreak(sl, sp, p, s, tool)) breakNoDamage(sl, sp, p, tool);
+            for (BlockPos p : findHammerAreaTargets(sl, sp, pos, face(sp, pos), tool, h.size(), false)) {
+                breakNoDamage(sl, sp, p, tool);
             }
         }
         return true; // origin block breaks normally (Fortune / Silk Touch apply via the tool)
+    }
+
+    /** Computes the blocks that will break if {@code player} mines {@code pos} (struck on {@code face}) with {@code tool}. */
+    public static List<BlockPos> previewHammerTargets(Level level, Player player, BlockPos pos, Direction face, ItemStack tool) {
+        if (!(tool.getItem() instanceof HammerItem h) || h.size() <= 1) return List.of();
+        BlockState state = level.getBlockState(pos);
+        if (state.isAir() || !level.mayInteract(player, pos)) return List.of();
+
+        if (player.isShiftKeyDown() && canBreak(level, player, pos, state, tool)
+                && state.is(ORES) && tool.is(ItemTags.PICKAXES)) {
+            Block ore = state.getBlock();
+            return findChain(level, player, pos, tool, s -> s.is(ore), 64);
+        }
+
+        return findHammerAreaTargets(level, player, pos, face, tool, h.size(), true);
+    }
+
+    private static List<BlockPos> findHammerAreaTargets(Level level, Player player, BlockPos pos, Direction face,
+            ItemStack tool, int size, boolean includeOrigin) {
+        List<BlockPos> targets = new ArrayList<>();
+        if (includeOrigin) {
+            BlockState originState = level.getBlockState(pos);
+            if (!originState.isAir() && level.mayInteract(player, pos)
+                    && (player.isCreative() || originState.getDestroySpeed(level, pos) >= 0)) {
+                targets.add(pos);
+            }
+        }
+        for (BlockPos p : HammerItem.area(pos, face, size)) {
+            if (p.equals(pos)) continue;
+            BlockState s = level.getBlockState(p);
+            if (tool.getDestroySpeed(s) > 1.0f && canBreak(level, player, p, s, tool)) {
+                targets.add(p);
+            }
+        }
+        return targets;
     }
 
     private static Direction face(ServerPlayer p, BlockPos pos) {
@@ -58,12 +94,12 @@ public final class BreakActions {
         return Direction.orderedByNearest(p)[0];
     }
 
-    private static boolean canBreak(ServerLevel l, ServerPlayer p, BlockPos pos, BlockState s, ItemStack tool) {
+    private static boolean canBreak(Level l, Player p, BlockPos pos, BlockState s, ItemStack tool) {
         if (s.isAir() || s.getDestroySpeed(l, pos) < 0 || !l.mayInteract(p, pos)) return false;
         return !s.requiresCorrectToolForDrops() || tool.isCorrectToolForDrops(s);
     }
 
-    private static void chain(ServerLevel l, ServerPlayer p, BlockPos origin, ItemStack tool, Predicate<BlockState> match, int max) {
+    private static List<BlockPos> findChain(Level l, Player p, BlockPos origin, ItemStack tool, Predicate<BlockState> match, int max) {
         Set<BlockPos> seen = new HashSet<>(List.of(origin));
         ArrayDeque<BlockPos> queue = new ArrayDeque<>(List.of(origin));
         List<BlockPos> found = new ArrayList<>();
@@ -78,7 +114,7 @@ public final class BreakActions {
                 if (match.test(s) && canBreak(l, p, n, s, tool)) queue.add(n);
             }
         }
-        for (BlockPos f : found) breakNoDamage(l, p, f, tool);
+        return found;
     }
 
     /** Drops resolve through the held tool, so Fortune and Silk Touch apply to every block. */
